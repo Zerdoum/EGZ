@@ -1,0 +1,580 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <setjmp.h>
+#include <inttypes.h>
+
+#include "set.h"
+
+typedef uint64_t u64;
+
+
+// tab_num: transforme un bitmap ens en table croissante des bits mis à 1 entre 0 et max-1
+// ens	notre bitmap
+// max	taille de notre bitmap 
+// tab	le tableau contenant les indices 
+void tab_num(u64 ens, int *tab, int max)
+{  
+	int i,j;
+	i=0;
+	j=0;
+	u64 m_max; // m_max est le masque
+	u64 m; 
+	m_max=1l<<max;
+	for(m=1;m!=m_max;m<<=1)
+	{
+		if((m&ens)!=0)
+		{
+			tab[i++]=j;
+		}
+		j++;
+	}
+}
+
+// rend le numéro d'un sous-ensemble d'un ensemble de n éléments
+// le sous-ensemble est donné comme un bitmap des éléments
+
+u64 numsubset(u64 w,int n)
+{
+   	int i,j; // index du parcours du triangle
+   	u64 a;   // valeurs du triangle de Pascal modifié
+   	u64 p;   // valeurs du triangle de Pascal
+   	u64 x;  // cumul de tous les sommets parcourus
+   	// initialisation
+   	i=-1;
+   	j=-1;
+   	p=0;
+   	a=0;
+   	x=0;
+   	while (n>0)
+   	{
+      	// selon la valeur du chiffre
+     		switch (w&1)
+      		{
+        	case 0:
+          		++i;           // en bas seulement
+          		a=2*a-p;       // mise à jour coef de Pascal modifié 
+          		p=(p*i)/(i-j); // mise à jour du coef de Pascal
+          		break;
+        	case 1:
+          		if (j==-1) p=1; else p=(p*(i-j))/(j+1);  // p(i-1,j) en fonction de p(i-1,j-1)
+          		a=2*a+p;        // mise à jour de a
+          		++i; ++j; // en bas à droite 
+          		if (i==j) p=1; else p=(p*i)/(i-j);  // mise à jour p(i,j) en fonction de p(i-1,j)
+          		break;
+      		}
+      		// décaler w pour positionner le chiffre suivant
+      		w>>=1;
+      		// cumul de la valeur du sommet
+      		x+=a;
+      		--n; // compteur de boucle
+   	}
+   	return x;
+}
+
+
+// rend le sous-ensemble d'un numéro donné
+u64 subsetnum(u64 x,int i) // le paramètre i sert de ligne courante
+{
+  	int	j; // colonne courante
+  	u64	a; // Coefficients du triangle de Pascal modifié a(n,j)
+  	u64	p; // Coefficients du triangle de Pascal
+  	u64	w; // mot resultat
+
+  	// initialisation
+  	w=0;
+  	p=1;
+  	a=0;
+  	j=0;
+  	// recherche de la colonne j telle que a(i,j) <= "x" < a(i,j+1)
+  	// et initialisation de a(i,j)
+  	while (a+p<=x)
+  	{
+    		a+=p;
+    		j++;
+    		p=(p*(i-j+1))/j;
+  	}
+  	p=(p*j)/i;
+  	a=(a+p)/2;
+  	--j;
+  	x-=a;
+  	--i;
+  	// boucle nominale
+  	while ( (j>=0) && (j<i) )
+  	{ // 'algorithme s'arrête dès qu'on est arrivé sur 'un des côté
+    	// soit le côté j=0, alors on compléte avec des zéros
+    	// soit le côté i=j, alors on complète avec des uns
+    		if (x>=a) // peut-on soustraire a(i-1,j)
+    		{
+      			p=(p*(i-j))/i;
+      			a=(a+p)/2; // mise à jour de a
+      			--i; // en haut seulement
+    		}
+    		else
+    		{
+      			w|=(1ll<<i); // se souvenir que le chiffre est 1
+      			a=(a-(p*(i-j))/i)/2; // mise à jour de a
+      			p=(p*j)/i;  // mise à jour de p
+      			--i; // en haut 
+     	 		--j; // a gauche 
+    		}
+    		x-=a; // on soustrait ce qu'on a pu
+  	}
+  	// remplissage des derniers caracteres avec des zéro ou des 1
+  	if (j!=-1) // selon de cote du triangle ou on arrive
+  	{
+    		w|=(1ll<<(i+1))-1ll;
+  	}
+  	return w;
+}
+
+// Fonction de soustraction.
+// une table croissante en liste d'éléments
+// Cette fonction sert de transformer le sous-ensemble en une suite. 
+// tab: contient le sous-ensemble. 
+// n: la taille du tableau tab.
+void sous_tab_num(int *tab,int n)
+{
+	int i;
+	for(i=0;i<n;i++)
+	{
+		tab[i]=tab[i]-i;
+	}
+}
+//
+// insère un 1 dans x à la position donnée par m = 0..010..0 où m est le masque 
+u64 insere_un_bis(u64 x, u64 m)
+{
+    u64 mm;
+    mm=m-1;
+    return (x&mm) + ((x&~mm)<<1) + m;
+}
+
+// returns binomoial coefficient {n\choose p}
+// not robust : suppose that n and p are nonnegative and that p <= n
+int_t binome(int n, int p)
+{
+	int_t r=1;
+	int i;
+	int q;
+	q=n-p;
+	if (q<p)
+	{	// {n choose p} = {n choose (n-p)}, compute the faster
+		p=q;
+	}
+	for (i=1;i<=p;i++,n--)
+	{
+		r=((dint_t)r*(dint_t)n)/(dint_t)i;
+	}
+	return r;
+}
+
+// Fonction qui renvoie le plus petit succésseur du premier numéro pour un alphabet et poids donnés.  
+//n: L'alphabet
+//x: Le numéro dont nous souhaiterons trouver ses successeurs. 
+//k: Le poids de Hamming de x
+int_t min_successeurs_bis(int n,int k)
+{
+	u64 t;
+	u64 m;
+	u64 ens;
+	m=1l<<(n-1);
+	ens=((1l<<k)-1)<<(n-1);
+	t=numsubset(insere_un_bis(ens,m),n+k);
+	return t;
+}
+
+//int_t MINI;
+// Schemaenz est la dernière version qui marche 
+// m=n+k tel que n est la taille de l'alphabet. et k est le poids.  
+// nbr: Le numéro dont on cherche ses successeurs. 
+// Le parcours du nbr commence par l'indice 0 
+// ptails est la table des queues
+// renvoie la dimension du carré dans lequel se trouve nbr
+int schemaenz(int_t*tab_sc,int_t*ptails,int_t nbr, int m, int k)
+{	
+    	//***************** Les variables ***************** 
+	int n; // taille de l'alphabet. 
+	int j; // sert à parcourir les sucesseurs qui sont à l'intérieur du schéma en Z. 
+	// Les variables pour parcourir notre arbre. 
+	int_t new_min;	// La borne inférieure de l'intervale. 
+	int_t b;		// binome(m,k)
+	int_t new_max;	// La borne supérieure de l'intervalle. 
+	int i;	// parcours la table des successeurs. (le i va de 0 à n-1).
+	int_t c;	// représente les coins, c'-à-d le premier successeur de chaque grand carré
+	int dim;	// dimension du carré dans lequel se trouve nbr
+	int_t tail;
+
+	i=0;
+	new_min=0;
+	n=m-k+1;	// taille de l'alphabet
+	c=min_successeurs_bis(n,k-1);
+	//nbr -=	MINI;//numsubset(((1<<(k-1))-1)<<n,m-1);	
+    	dim=n;
+	tab_sc[0]=c+nbr; // initialiser tab_sc[0] dans notre cas tab_sc[0]=113 avec c=93 et p=0
+
+	
+	//***************** Le parcours dans l'arbre ***************** 
+	b= binome(m,k);
+	tail=b;
+	new_max=b;		// binome(m-1,k-1)
+	while(nbr>new_min)	// Le test d'arrêt: tant qu'on n'a pas atteind le nbr.  
+	{
+		if( nbr < new_max )
+		{
+			// si le nombre est dans l'intervalle [min, max[, descendre dans l'arbre
+			b=((int_t)b*(int_t)k)/(int_t)m;	// (m-1 choose k-1 ) = (m choose k) * k / m
+			m--;
+			k--;		// b == binome(m,k)
+			tail=new_max;
+			new_max=new_min+b;
+			continue;
+		}
+		
+		while( nbr >= new_max ) 
+		{	// si nbr est hors de l'intervalle, parcourir les fils vers la gauche
+			c += (int_t)b*(int_t)(m+1)/(int_t)(k+1); //binome(m+1,k+1);
+			b=((int_t)b*(int_t)(m-k))/(int_t)m;	// (m-1 choose k) = (m choose k) * (m-k) / m
+			m--;
+			new_min=new_max;
+			new_max=new_min+b;
+			i++;
+			dim--;
+			tab_sc[i]=c + nbr - new_min;
+			if (ptails!=NULL)
+			{
+			       ptails[i]=tail;
+			}
+		}
+	}
+	for(j=i+1;j<n;j++)
+	{	// les autres successeurs sont obtenus en ajoutant 1
+		tab_sc[j] = tab_sc[j-1] + 1;
+	}
+	return dim;
+}
+
+
+#define MAX_N 60
+// rend l'ensemble des successeurs de x
+node_t* succ_elt(int_t x,int n, int k)
+{
+	node_t*p;
+	int i;
+	int_t t[MAX_N];
+
+	p=EMPTY_SET;
+	schemaenz(t,NULL,x,n+k,k+1);
+	for (i=0;i<n;i++)
+	{
+		include_elt(t[i],&p);
+	}
+	return p;
+
+}
+
+
+// rend l'ensemble des successeurs de x avec l'algorithme naif
+node_t* succ_elt_1(int_t x, int n, int k)
+{
+	node_t* p;
+	int i;
+	u64 m;
+	u64 ens;
+	i=0;
+	m=1;
+	p=EMPTY_SET;
+	ens=subsetnum(x,n+k-1); // L'ensemble contient le bitmap associé au numéro x
+	while (i<n)
+	{
+		if ((ens&m)==0)
+		{
+			include_elt(numsubset(insere_un_bis(ens,m),n+k),&p);
+			i++;
+		}
+		m<<=1;
+	}
+	return p;
+}
+
+node_t* succ_intvl(int_t a, int_t b, int n, int k)
+{
+	int m;
+	int_t ta[MAX_N];
+	int_t tb[MAX_N];
+	int i;
+	int dim_a;
+	int_t tailsa[MAX_N];
+	int_t mini;
+
+	node_t* p;
+
+	m=n+k-1;
+	//n=m+1-k;
+	mini=numsubset(((1l<<k)-1)<<(n-1),m);
+	a-=mini;
+	b-=mini;
+	if (a==b)
+	{
+		return succ_elt(a,n,k);
+	}
+
+	p=EMPTY_SET;
+	// successeurs de a
+	dim_a=schemaenz(ta,tailsa,a,m+1,k+1);
+	// successeurs de b
+	schemaenz(tb,NULL,b,m+1,k+1);
+	
+	// inclure le schéma en z
+	include_intvl(ta[n-dim_a],tb[n-1],&p);
+	// inclure les autres colonnes
+	for (i=0;i<n-dim_a;i++)
+	{
+		if ( tb[i]-ta[i] == b-a )
+			include_intvl(ta[i],tb[i],&p);
+		else
+			include_intvl(ta[i],ta[i]+tailsa[i]-a-1,&p);
+	}
+	return p;
+}
+
+
+
+
+// successeur d'un interval avec l'algorithme naif
+node_t* succ_intvl_1(int_t a, int_t b, int n, int k)
+{
+	node_t*p,*q;
+	int_t i;
+	p=EMPTY_SET;
+	for (i=a; i<=b;i++)
+	{	// parcours tout l'intervalle et ajoute tous les successeurs des éléments
+		q=succ_elt_1(i,n,k);
+		include_set(q,&p);
+		empty_out(&q);
+	}
+
+	return p;
+}
+
+//int affiche_succ_ele(int nbr, int)+
+
+#define K_MAX	100
+
+// C2 + C2 + C8
+int loI(int a, int b)
+{
+	int a1, b1, a2, b2;
+	a1= a/4;
+	a2= a%4;
+	b1= b/4;
+	b2= b%4;
+	a2 = (a2 ^ b2);
+	a1 = (a1 + b1)%8;
+	return (a1*4) + a2;
+}
+// C2 + C2 + C2 + C6
+int loi(int a, int b)
+{
+	int a1, b1, a2, b2;
+	a1= a/8;
+	a2= a%8;
+	b1= b/8;
+	b2= b%8;
+	a2 = (a2 ^ b2);
+	a1 = (a1 + b1)%6;
+	return (a1*8) + a2;
+}
+
+
+node_t* init(int n, int k)
+{
+	node_t* q;
+	int_t min, max;
+	int i;
+	int j;
+	int m;
+	int tabens[K_MAX];
+	u64 x;
+	int res;
+	m=n+k-1;
+	min = numsubset(((1l<<k)-1)<<(n-1), m);
+	max = numsubset((1l<<k)-1,m);
+	q=EMPTY_SET;
+	printf("%ld .. %ld\n",min,max);
+	for (i=min; i<=max ; i++)
+	{
+		// calcul du bitmap
+		x=subsetnum(i,m);
+		tab_num(x,tabens,m);	// transforme le bitmap en table d'indices strict croi
+		sous_tab_num(tabens,k);	// change en indice de suite 0..n-1
+		res=0;
+		for (j=0;j<k;j++)
+		{
+			res=loi(res,tabens[j]);
+//	res+=tabens[j];
+//	res %= n;
+		}
+		if (res==0)
+		{
+		//	for (j=0;j<k;j++) printf("%d ", tabens[j]);
+		//	printf(" (%d)  \n", i);
+		//	fflush(stdou6t);
+			include_elt(i,&q);
+		}
+	}
+	//printf("nb de suites de somme nulle = %ld\n", cardinal(q));
+	return q;
+}
+
+extern jmp_buf env;
+
+int main()
+{
+
+	printf("Hello egz!\n");
+	if ((setjmp(env))!=0)
+	{
+		return 0;
+	}
+	prologue(100000000);
+	printf("size of node= %ld\n",sizeof(node_t));
+
+
+	//int_t t[MAX_N];
+	int n;
+	int k;
+	int m;
+	
+//	int_t nbre;
+//	int dim;
+//	nbre=17;
+
+//	int_t tails[100];
+//	int_t min;
+	
+/*	
+	n=5;
+	k=5;
+	m=n+k-1;
+
+	int_t bi=binome(m,k);
+	printf("binome(%d,%d)=%ld, n=%d\n",m-1,k+1,bi,n);
+	for (nbre=0; nbre<bi;nbre++)
+	{
+		dim=schemaenz(t,tails,nbre,m+1,k+1);
+
+		//printf("nbre= %ld ; tail = %d	prologue(200000000);
+
+ ; successeurs : ",nbre, tails[dim+1]);
+		for (ii=0;ii<n;ii++) printf("%ld ",t[ii]);
+		printf("dim = %d\n",dim);
+	}
+	fflush(stdout);
+*/
+	node_t*p;//,*q;
+
+//	n=5;
+//	k=3;
+//	m=n+k-1;
+	/*{
+	int_t a;
+//
+	int_t b;
+	int_t min;
+
+	for (a=0;a<bi;a++)
+	{
+		for(b=a;b<bi;b++)
+		{
+			//MINI=
+			min=numsubset(((1<<k)-1)<<(n-1),m);	// 1...1 0...0
+	
+			p=succ_intvl(a+min,b+min,n,k);
+
+			node_t*q;
+			if (a!=b) q=succ_intvl_1(a+min,b+min,n,k);0
+			else q=succ_elt_1(a+min,n,k);
+
+			if (!are_equal(p,q))
+			{
+				printf("!successeurs de [%ld,%ld]\n",a,b);
+				print_set(p);
+				print_set(q);
+				bye();
+			}
+			empty_out(&q);
+			empty_out(&p);
+		}
+		printf(".");
+		fflush(stdout);
+	}
+	printf("ok");
+
+//	bye();
+//	return 0;
+	}*/
+
+
+
+	n=32;	// C2+C2+C6
+	k=8;
+	node_t*p1;
+	node_t*p2;
+
+	m=n+k-1;
+	interval_t*e;
+	int ff;
+
+	int_t min1, max1;
+	p=init(n,k);
+	printf("n=%d - taille = %d\n",n,taille(p));
+
+	do
+	{
+		printf("-%d-",k);
+		fflush(stdout);
+		min1=numsubset(((1l<<(k+1))-1)<<(n-1),m+1);	// 1...1 0...0
+		max1=numsubset((1l<<(k+1))-1,m+1);		// 0...0 1...1
+		set_min_max(min1,max1);
+		printf("min = %ld, max=%ld\n", min1, max1);
+		e=start_intvl(p);
+		p2=EMPTY_SET;
+		while(e!=NULL)
+		{
+			p1=EMPTY_SET;
+			p1=succ_intvl(e->a,e->b,n,k);
+			include_set(p1,&p2);
+		//	if (k==7)
+		//	{
+		//		print_set(p1);
+		//		print_set(p2);
+		//		fflush(stdout);
+		//		char c=getc(stdin);
+		//	}
+			empty_out(&p1);
+			e=next_intvl();
+		}
+		//empty_out(&p);
+		p=p2;
+		k++;
+		m=n+k-1;
+		ff=is_full(p);
+		printf("**[%d]**",taille(p));
+		//print_set(p);
+		if (k>=10)
+		{
+		//	print_set(p);
+			//bye();
+		}
+	}
+	while (ff==0);
+	printf("egz=%d\n",k);
+	fflush(stdout);
+	
+	bye();
+
+	
+ 	return 0; 
+ 
+}

@@ -1,0 +1,1431 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <setjmp.h>
+
+#include "set.h"
+
+
+
+// maximal value of an element of a set, modified by set_min_max.
+int_t int_max;
+// minimal value of an element of a set, modified by set_min_max.
+int_t int_min;
+
+#if (SIZE_INT==64)
+// default maximal value, initialized in prologue()
+#define INT_MAX	INT64_MAX
+#endif
+#if (SIZE_INT==32)
+#define INT_MAX	INT32_MAX
+#endif
+
+// default minimal value, initialized in prologue()
+#define INT_MIN	0
+
+// assign int_min to a, and int_max to b
+void set_min_max(int_t a, int_t b)
+{
+    
+	int_min=a;
+	int_max=b;
+}
+
+// environnement to manage fatal errors
+jmp_buf env;
+
+// called in case of fatal error, mainly memory overflow
+// "msg" is the error message and "no" is an error number
+static void fatal_error(char*msg, int no)
+{
+	printf("** Erreur fatale ** \"%s\" !\n",msg);
+	longjmp(env,no);
+}
+
+
+// basic dynamic memory management
+// -------------------------------
+//
+// free nodes are linked in a chained list.
+// allocate a new node extract the first node of the list
+// free a node include it at the head of the list
+//
+
+// the memory consists in an array of nodes
+static node_t *__nodes;
+
+// list of free nodes.
+static node_t*__list_nodes;
+
+// memory initialisation.
+// the free nodes are linked with the fg field
+static void init_mem()
+{
+	int i;
+	node_t*next;
+	__nodes=malloc(NB_NODES*sizeof(node_t));
+	next=NULL;
+	for (i=0;i<NB_NODES;i++)
+	{
+		__nodes[i].fg=next;
+		next=__nodes+i;
+	}
+	__list_nodes=__nodes+NB_NODES-1;
+}
+
+// returns a new node if possible, and call a fatal error if this is not possible
+static node_t*new_node()
+{
+	node_t*nn;
+	if (__list_nodes==NULL)
+	{
+		fatal_error("mémoire pleine",1);
+	}
+	nn=__list_nodes;
+	__list_nodes=nn->fg;
+	return nn;
+}
+
+// free the node p
+// --------------------
+static void free_node(node_t*p)
+{
+	// ajoute le node en tête
+	p->fg=__list_nodes;
+	__list_nodes=p;
+}
+
+
+// for debug purpose, returns the number of free nodes in the list
+// ------------------------------
+int_t nb_free_nodes()
+{
+	int_t n;	// value to be returned
+	node_t*p;	// current term of the list
+
+	p=__list_nodes;
+	n=0;
+	while(p!=NULL)
+	{
+		n++;
+		p=p->fg;
+	}
+	return n;
+}
+
+
+// make the set *pp empty and free all the node it contains
+//---------------------------------------------------------
+void empty_out(node_t**pp)
+{
+	if (*pp==NULL)
+		return;
+	if ( (*pp)->e1.a >= 0 )
+	{
+		empty_out(&(*pp)->fg);
+	}
+	empty_out(&(*pp)->fm);
+	empty_out(&(*pp)->fd);
+	free_node(*pp);
+	*pp=NULL;
+}
+
+
+// returns non zero if p is the empty set
+int is_empty(node_t*p)
+{
+	return p==NULL;
+}
+
+
+
+//*******************************************************
+
+// for debug purpose, returns the size of p, i.e. the number of node taken up by p
+int taille(node_t*p)
+{
+	int t;
+	if (p==NULL)
+	{
+		return 0;
+	}
+	t=0;
+	if (p->e1.a>=0)
+	{
+		t=taille(p->fg);
+	}
+	return t+1+taille(p->fm)+taille(p->fd); 
+}
+
+
+
+// debug utilitaries
+#ifdef DEBUG
+// returns the height of the b-tree
+// and -1 if the b-tree is unbalanced
+int hauteur(node_t*p)
+{
+	int hg,hm,hd;
+	if (p==NULL)
+		return 0;
+	if ((p->fg==NULL)&&(p->fm==NULL)&&(p->fd==NULL))
+		return 1;
+	if (p->e1.a >= 0)
+	{
+		if (p->fg==NULL) return -1;
+		hg=hauteur(p->fg);
+		if (hg<0) return -1;
+	}
+	else
+	{
+		hg=-1;
+	}
+	if (p->fm==NULL)
+		return -1;
+	hm=hauteur(p->fm);
+	if (hm<0) return -1;
+	if (p->fd==NULL)
+		return -1;
+	hd=hauteur(p->fd);
+	if (hd<0) return -1;
+
+	if (hm!=hd) 
+	{
+		return -1;
+	}
+	if ((hg>=0)&&(hg!=hm)) 
+	{
+		return -1;
+	}
+	return hm+1;
+}
+
+static int_t __debug_last;
+
+// recursive verification procedure
+// verify that the b-tree is corrected ordered
+static int verif_rec(node_t*p)
+{
+	int_t a1, b1, a2, b2;
+	int r;
+	if (p==NULL)
+	{
+		return 1;
+	}
+	a1=p->e1.a;
+	a2=p->e2.a;
+	b1=p->e1.b;
+	b2=b-e2.b;
+	if (b1<a1) return 0;
+	if (a2<=b1) return 0;
+	if (b2<a2) return 0;
+	if (a1>=0)
+	{
+		r=verif_rec(p->fg);
+		if (r==0) return r;
+
+		if (__debug_last>=a1) return 0;
+		__debug_last=b1;
+	}
+	r=verif_rec(p->fm);
+	if (r==0) return 0;
+	if (__debug_last>=b2) return 0;
+	__debug_last=b2;
+	return verif_rec(p->fd);
+}
+
+// user verification procedure
+int verif(node_t*p)
+{
+	__debug_last=-1;
+	return verif_rec(p);
+}
+
+#endif
+
+
+//****************************************************************************
+
+// interval display
+// [a,b] if bounds are different, [a] if bounds are equal
+static void print_intvl(element_t a, element_t b)
+{
+	if (a!=b)
+		printf("[%" PRId ",%" PRId "]",a,b);
+	else
+		printf("[%" PRId "]",a);
+}
+
+// recursive display of a set without parenthesis
+static void print_rec(node_t*p)
+{
+	while(p!=NULL)
+	{
+		if (p->e1.a>=0)
+		{
+			print_rec(p->fg);
+			print_intvl(p->e1.a,p->e1.b);
+		}
+		print_rec(p->fm);
+		print_intvl(p->e2.a,p->e2.b);
+		p=p->fd;	// tail recursion
+	}
+}
+
+
+// display of a set a interval union between parenthesis e.g. ([a1,b1] [a2,b2] [a3,b3] )
+void print_set(node_t*p)
+{
+	printf("(");
+	print_rec(p);
+	printf(")\n");
+}
+
+
+// set cardinality
+int_t cardinal(node_t*p)
+{
+	int_t c;
+	c=0;
+	if (p==NULL)	// le cardinalty of the empty set is zero
+		return 0;
+	if (p->e1.a>=0)	// include interval e1 if it exists
+		c = p->e1.b - p->e1.a + 1 + cardinal(p->fg);
+	// add cardinality of e2
+	c+= p->e2.b - p->e2.a + 1;
+	// add the cardinality of the childs
+	return c + cardinal(p->fm) + cardinal(p->fd);
+}
+
+
+// returns 1 if interval [a,b] is a subset of set p
+int is_included_intvl(element_t a, element_t b, node_t*p)
+{
+	interval_t*e;
+	e=belong(a,p);
+	if (e==NULL)	// if a do not belong to p, then [a,b] is not subset of p
+		return 0;
+	// e is the interval of s that contains a
+	if (b > e->b)	// check if b is this interval
+		return 0;
+	return 1;
+}
+
+
+// returns 1 if p is subset of q
+// global variable for the recursive procedure and do not gasp stack to pass the same parameter
+static node_t*__q_is_subset;
+// recursive check indluded in global __q_is_subset
+static int is_subset_rec(node_t*p)
+{
+	do
+	{
+		// p is subset of q if all its intervals are subset of q
+		if (p->e1.a>=0)
+		{
+			if (p->fg!=NULL)
+				if (is_subset_rec(p->fg)==0)
+					return 0;
+			if (is_included_intvl(p->e1.a,p->e1.b,__q_is_subset)==0)
+				return 0;
+		}
+		if (p->fm!=NULL)
+			if (is_subset_rec(p->fm)==0)
+				return 0;
+		if (is_included_intvl(p->e2.a,p->e2.b,__q_is_subset)==0)
+			return 0;
+		p=p->fd;	// tail recursivity
+	}
+	while (p!=NULL);
+	return 1;
+}
+// user procedure
+int is_subset(node_t*p, node_t*q)
+{
+	// check empty sets
+	if (p==NULL)	// empty set is subset of all sets
+		return 1;
+	if (q==NULL)	// no set but empty set are subset of the empty set
+		return 0;
+	// assign global q
+	__q_is_subset=q;
+	// call recursive procedure
+	return is_subset_rec(p);
+}
+
+// set equality set p subset of q and q subset of p
+// p and q may have different b-tree structure
+int are_equal(node_t*p, node_t*q)
+{
+	return is_subset(p,q) & is_subset(q,p);
+}
+
+
+// re balance the node p
+// i is the unbalanceness, 0 : is balancedness
+// 1 : left child is higher than others
+// 2 : middle child is higher
+// 3 : right child is higher
+static int balance(int i, node_t**pp)
+{
+	node_t*p,*q,*r;
+	if (i==0)
+	{
+		return 0;
+	}
+	p=*pp;
+	switch(i)
+	{	// assign q to the child according to the value of i
+		case 1:
+			q=p->fg;
+			break;
+		case 2:
+			q=p->fm;
+			break;
+		default: // case 3
+			q=p->fd;
+			break;
+	}
+	if (p->e1.a < 0)	// if e1 is not assigned
+	{	// here, q has necessarily a unique interval
+		if(i==2)
+		{	// à gauche
+			p->e1=q->e2;
+			p->fg=q->fm;
+			p->fm=q->fd;
+			free_node(q);
+		}
+		else
+		{	// à droite
+			q->e1=p->e2;
+			q->fg=p->fm;
+			*pp=q;
+			free_node(p);
+		}
+		return 0;
+	}
+	else
+	{	// here, q has necessarily a unique interval
+		r=new_node();
+		switch (i)
+		{
+			case 1:
+				r->e1.a=-1ll;
+				r->e2=p->e2;
+				r->fg=NULL;
+				r->fm=p->fm;
+				r->fd=p->fd;
+				p->e2=p->e1;
+				p->e1.a=-1;
+				p->fm=p->fg;
+				p->fg=NULL;
+				p->fd=r;
+				return 1;
+			case 2:
+				r->e1.a = -1ll;
+				r->e2 = p->e1;
+				r->fg = NULL;
+				r->fm = p->fg;
+				r->fd = q->fm;
+				p->e1.a =-1ll;
+				p->fg = NULL;
+				p->fm = q->fd;
+				q->fm = r;
+				q->fd = p;
+				*pp=q;
+				return 1;
+			default: //case 3:
+				r->e1.a=-1;
+				r->e2=p->e1;
+				r->fg=NULL;
+				r->fm=p->fg;
+				r->fd=p->fm;
+				p->e1.a=-1;
+				p->fg=NULL;
+				p->fm=r;
+				p->fd=q;
+				return 1;
+		}
+	}
+}
+
+// return a set reduced to a single interval [a,b]
+node_t* interval(element_t a, element_t b)
+{
+	node_t* p;
+	if (b<a)
+		return NULL;
+	p=new_node();
+	p->e1.a=-1;	// no interval e1
+	p->e2.a=a;	// assigh e2
+	p->e2.b=b;
+	p->fg=NULL;	// assign no child
+	p->fm=NULL;
+	p->fd=NULL;
+	return p;
+}
+
+void full_up(node_t**pp)
+{
+	// free pp and make it empty
+	empty_out(pp);
+	// full up with the whole interval
+	*pp=interval(int_min,int_max);
+}
+
+// is p the full set
+int is_full(node_t*p)
+{
+	// check non empty
+	if (p==NULL)
+		return 0;
+	// check single node
+	if ( (p->fg!=NULL) || (p->fm!=NULL) || (p->fd!=NULL) )
+		return 0;
+	// check only one interval in the node
+	if ( p->e1.a >= 0 )
+		return 0;
+	// check bounds of the intervall
+	if ( ( p->e2.a!= int_min ) || (p->e2.b != int_max) )
+		return 0;
+	return 1;
+}
+
+
+// construct the full set = [min, max]
+node_t*full_set()
+{
+	return interval(int_min,int_max);
+}
+
+// FIN PROVISOIRE DE LA TRADUCTION
+// insère un intevralle x dans l'ensemble *pp
+// rend le hauteur de noeud ajouté
+
+static interval_t*__x_insere;
+
+static int insere_rec(node_t**pp)
+{
+	node_t*q;
+	node_t*p=*pp;
+	int i;
+	if (p==NULL)
+	{	// insersion dans l'ensemble vide
+		q=new_node();
+		q->e1.a=-1;
+		q->e2=*__x_insere;
+		q->fg=NULL;
+		q->fm=NULL;
+		q->fd=NULL;
+		*pp=q;
+		return 1;
+	}
+	if (__x_insere->a < p->e1.a)
+	{	// insersion dans le fils gauche
+		i=insere_rec(&p->fg);
+		return balance(i,pp);
+	}
+	if (__x_insere->a  == p->e1.a)
+	{	// normalement cela ne devrait jamais survenir
+		// car insere est appelé avec des intervalles non existants dans l'ensemble
+		return 0;
+	}
+	if (__x_insere->a < p->e2.a)
+	{	// insersion dans le fils du milieu
+		i=insere_rec(&p->fm);
+		return balance(2*i,pp);
+	}
+	if (__x_insere->a == p->e2.a)
+	{	// ne devrait pas survenir non plus
+		return 0;
+	}
+	// insersion dans le fils droit
+	i=insere_rec(&p->fd);
+	return balance(3*i,pp);
+}
+
+static int insere(interval_t*x, node_t**pp)
+{
+	__x_insere=x;
+	return insere_rec(pp);
+}
+
+
+
+
+// rééquilibrage lors de la suppression
+// i : numéro du fils où la suppression a eu lieu et qui contient un déséquilibrage
+// 0 : pas de déséquilibrage
+// 1 : fg
+// 2 : fm
+// 3 : fd
+static int balans(int i, node_t**pp)
+{
+	node_t* p;
+	node_t* q;
+	node_t* f;	// frère
+	node_t* s;	// soeur
+	node_t* r;
+	if (i==0)
+	{
+		return  0;
+	}
+	p=*pp;
+	if (p->e1.a < 0)
+	{	// le père n'a qu'un élément
+		if (i==2)
+		{
+			q=p->fm;
+			f=p->fd;
+		}
+		else
+		{
+			q=p->fd;
+			f=p->fm;
+		}
+		if (f->e1.a < 0)
+		{	// père à 1 élément, frère à 1 élément
+			if (i==2)
+			{
+				f->e1=p->e2;
+				f->fg=q; //p->fm;
+				*pp=f;
+				free_node(p);
+				return 1;
+			}
+			// i==3
+			p->e1=f->e2;
+			p->fg=f->fm;
+			p->fm=f->fd;
+			free_node(f);
+			return 1;
+
+		}
+		// père à 1 élément, frère à 2 éléments
+		r=new_node();
+		if (i==3)
+		{
+			r->e1.a=-1;
+			r->e2=f->e1;
+			r->fg=NULL;
+			r->fm=f->fg;
+			r->fd=f->fm;
+			p->fm=f->fd;
+			p->fd=q;
+			f->e1.a=-1;
+			f->fg=NULL;
+			f->fm=r;
+			f->fd=p;
+			*pp=f;
+			return 0;
+		}
+		// i==2
+		r->e1.a=-1;
+		r->e2=p->e2;
+		r->fg=NULL;
+		r->fm=p->fm;
+		r->fd=f->fg;
+		p->e2=f->e1;
+		p->fm=r;
+		f->e1.a=-1;
+		f->fg=NULL;
+		return 0;
+	}
+	else
+	{
+		// père à deux éléments
+		switch(i)
+		{	// affectation : q = noeud en déséquilibre
+			// f : frère
+			// s : soeur
+			case 1:
+				q=p->fg;
+				f=p->fm;
+				s=p->fd;
+				if (f->e1.a<0)
+				{	// frère à un élément, soeur à 2 éléments
+					f->e1=p->e1;
+					f->fg=q;
+					p->e1.a=-1;
+					p->fg=NULL;
+					return 0;
+
+				}
+				// frère à deux éléments
+				if(s->e1.a < 0)
+				{	// soeur à 1 élément
+					s->e1=p->e2;
+					s->fg=f->fd;
+					p->e2=f->e1;
+					p->fm=f->fg;
+					p->fd=f->fm;
+					f->e1.a=-1;
+					f->fg=NULL;
+					f->fm=p;
+					f->fd=s;
+					*pp=f;
+					return 0;
+				}
+				// frère et soeur à 2 éléments
+				r=new_node();
+				r->e1.a=-1;
+				r->e2=p->e1;
+				r->fg=NULL;
+				r->fm=q;
+				r->fd=f->fg;
+				p->e1=f->e1;
+				p->fg=r;
+				f->e1.a=-1;
+				f->fg=NULL;
+				return 0;
+			case 2:
+				q=p->fm;
+				f=p->fg;
+				s=p->fd;
+				if (s->e1.a < 0)
+				{
+					s->e1=p->e2;
+					s->fg=q; //p->fm;
+					p->e2=p->e1;
+					p->e1.a=-1;
+					p->fg=NULL;
+					p->fm=f;
+					return 0;
+				}
+
+				if (f->e1.a < 0)
+				{
+					f->e1=f->e2;
+					f->e2=p->e1;
+					f->fg=f->fm;
+					f->fm=f->fd;
+					f->fd=q;
+					p->e1.a=-1;
+					p->fg=NULL;
+					p->fm=f;
+					return 0;
+				}
+
+				r=new_node();
+				r->e1.a=-1;
+				r->e2=p->e1;
+				r->fg=NULL;
+				r->fm=f->fd;
+				r->fd=q;
+				p->e1=f->e2;
+				p->fm=r;
+				f->fd=f->fm;
+				f->fm=f->fg;
+				f->e2=f->e1;
+				f->e1.a=-1;
+				f->fg=NULL;
+				return 0;
+			default:
+				q=p->fd;
+				f=p->fg;
+				s=p->fm;
+				if (s->e1.a < 0)
+				{
+					s->e1=s->e2;
+					s->e2=p->e2;
+					s->fg=s->fm;
+					s->fm=s->fd;
+					s->fd=q;
+					p->e2=p->e1;
+					p->e1.a=-1;
+					p->fd=s;
+					p->fm=f;
+					p->fg=NULL;
+					return 0;
+				}
+				if (f->e1.a < 0)
+				{
+					f->e1=f->e2;
+					f->e2=p->e1;
+					f->fg=f->fm;
+					f->fm=f->fd;
+					f->fd=s->fg;
+					p->e1=s->e2;
+					p->fg=s->fm;
+					p->fm=s->fd;
+					p->fd=q;
+					s->e2=s->e1;
+					s->e1.a=-1;
+					s->fg=NULL;
+					s->fm=f;
+					s->fd=p;
+					*pp=s;
+					return 0;
+				}
+				r=new_node();
+				r->e1.a=-1;
+				r->e2=p->e2;
+				r->fg=NULL;
+				r->fm=s->fd;
+				r->fd=q;
+				p->e2=s->e2;
+				s->e2=s->e1;
+				s->e1.a=-1;
+				s->fd=s->fm;
+				s->fm=s->fg;
+				s->fg=NULL;
+				p->fd=r;
+				return 0;
+		}
+	}
+}
+
+
+
+// suppression de l'élément le plus à droite et inscription 
+// de l'élément supprimé à l'adresse pi
+// Rend 1 si un node a été supprimé, ce qui provoque un déséquilibre
+static interval_t*__pi_supprech;
+static int supprech_rec(node_t**pp)
+{
+	node_t*p;
+	int i;
+	p=*pp;
+	if (p->fd==NULL)
+	{	// c'est une feuille, l'élément est là
+		*__pi_supprech=p->e2;
+		if (p->e1.a>=0)
+		{	// si c'est une feuille à 2 éléments
+			// juste supprimer l'élément de droite
+			p->e2=p->e1;
+			p->e1.a=-1;
+			return 0;	// pas de déséquilibrage
+		}
+		// supprimer le node
+		free_node(p);
+		*pp=NULL;
+		return 1;
+	}
+	i=supprech_rec(&p->fd);
+	return balans(3*i,pp);
+}
+
+static int supprech(interval_t*pi,node_t**pp)
+{
+	__pi_supprech=pi;
+	return supprech_rec(pp);
+}
+// supprime l'intervalle x de l'ensemble p=*pp
+// ---------------------------------
+static interval_t *__x_supprime;
+
+static int supprime_rec(node_t**pp)
+{
+	node_t*p;
+	int i;
+	
+	p=*pp;
+	if (p==NULL)
+	{	// on ne peut rien retirer du vide
+		return 0;
+	}
+	if (__x_supprime->a < p->e1.a)
+	{
+		// si x est dans le fils gauche
+		i=supprime_rec(&p->fg);
+		return balans(i,pp);
+	}
+	if (__x_supprime->a == p->e1.a)
+	{	// si x est l'intervalle e1
+		if (p->fg==NULL)
+		{
+			// supprimer seulement cet élément
+			p->e1.a = -1;
+			return 0;
+		}
+		i=supprech(&p->e1,&p->fg);
+		return balans(i,pp);
+	}
+	if (__x_supprime->a < p->e2.a)
+	{
+		// si x est dans le fils du milieu
+		i=supprime_rec(&p->fm);
+		return balans(2*i,pp);
+	}
+	if (__x_supprime->a == p->e2.a)
+	{
+		// si x est l'intervalle e2
+		if (p->fm==NULL)
+		{	// y a-t-il deux éléments dans le node
+			if (p->e1.a >= 0)
+			{	// mettre e1 à la place de e2
+				p->e2 = p->e1;
+				p->e1.a = -1;
+				return 0;
+			}
+			// s'il n'y a qu'un seul élément, le supprimer et supprimer le node
+			*pp=NULL;
+			free_node(p);
+			return 1;
+		}
+		i=supprech(&p->e2,&p->fm);
+		return balans(2*i,pp);
+	}
+	i=supprime_rec(&p->fd);
+	return balans(3*i,pp);
+
+}
+
+static int supprime(interval_t* x, node_t**pp)
+{
+	__x_supprime=x;
+	return supprime_rec(pp);
+}
+
+
+//******************************************************************************
+
+// test d'appartenance
+// si x appartient à p, rend l'intervalle
+// version itérative
+// -------------------
+interval_t* belong(element_t __x_belong, node_t*p)
+{
+	while(p!=NULL)
+	{	// aucun élément n'appartient à l'ensemble vide
+		if (p->e1.a >= 0)
+		{
+			if (__x_belong < p->e1.a)
+			{
+				p=p->fg;
+				continue;
+			}
+			if (__x_belong <= p->e1.b)
+			{
+				return &p->e1;
+			}
+		}
+		if (__x_belong < p->e2.a)
+		{
+			p=p->fm;
+			continue;
+		}
+		if (__x_belong <= p->e2.b)
+		{
+			return &p->e2;
+		}
+		p=p->fd;	// dérécursion terminale
+	}
+	return NULL;
+}
+
+
+// rend l'adresse de a si [a,b] est un intervalle de p
+// affecte à pb l'adresse où est inscrit b
+// procédure itérative
+static element_t* cherche_a(element_t**ppb, element_t a, node_t*p)
+{
+	while (p!=NULL)
+	{
+		if (p->e1.a >= 0)
+		{
+			if (a < p->e1.a)
+			{
+				p=p->fg;
+				continue;
+			}
+			if (p->e1.a==a)
+			{
+				*ppb=&p->e1.b;
+				return &p->e1.a;
+			}
+		}
+		if (a < p->e2.a)
+		{
+			p=p->fm;
+			continue;
+		}
+		if (a == p->e2.a)
+		{
+			*ppb=&p->e2.b;
+			return &p->e2.a;
+		}
+		p=p->fd;
+	}
+	return NULL;
+}
+
+// cherche b dans p -- version itérative
+static element_t* cherche_b(element_t b,node_t*p)
+{
+	while (p!=NULL)
+	{
+		if (p->e1.a >= 0)
+		{
+			if (b < p->e1.a)
+			{
+				p=p->fg;
+				continue;
+			}
+			if (p->e1.b == b)
+			{
+				return &p->e1.b;
+			}
+		}
+		if (b < p->e2.a)
+		{
+			p=p->fm;
+			continue;
+		}
+		if (b == p->e2.b)
+		{
+			return &p->e2.b;
+		}
+		p=p->fd;
+	}
+	return NULL;
+}
+
+
+// ajoute un élément dans un ensemble
+void include_elt(element_t x, node_t**pp)
+{
+	element_t*pa,*pb,*pab;
+	interval_t e;
+	node_t*p;
+
+	if ( (x < int_min) || ( x > int_max) )
+		return;
+	p=*pp;
+	if (belong(x,p))
+	{	// si x appartient déjà à p, il n'y a rien à faire
+		return;
+	}
+	// x augmente-t-il un intervalle par la gauche ?
+	pa=cherche_a(&pab,x+1,p);
+	// x augmente-t-il un interalle par la droite ?
+	pb=cherche_b(x-1,p);
+	if (pb!=NULL)
+	{	// si x est à insérer à droite d'un intervalle
+		if (pa!=NULL)
+		{	// si x est aussi à insérer à gauche, jonction de deux intervalles
+			*pb=*pab;	// remplacer borne sup de l'intervalle à gauche
+			e.a=x+1;	// en vue de suppression de l'intervalle [x+1,y]
+			supprime(&e,pp);
+			return;
+		}
+		// s'il est à insérer à droite seulement, changer la borne droite de l'intervalle
+		*pb=x;
+		return;	// et c'est tout
+	}
+	if (pa!=NULL)
+	{	// changer la borne droite
+		*pa=x;
+		return;
+	}
+	// et sinon, ajouter un intevalle isolé
+	e.a=x;
+	e.b=x;
+	insere(&e,pp);
+}
+
+// suppression des intervalles inclus dans un intervalle [a,b]
+// Il n'est pas possible de les supprimer en même temps que le parcours, car cela
+// déséquilibre l'arbre et la suppression peut entraîner des effets de bord qui 
+// cassent les liens du parcours
+// L'algorithme est donc
+// 1. chercher un intervalle inclus dans l'ensemble
+// 2. si on en a trouvé, le supprimer
+// 3. recommencer tant qu'on en trouve
+
+// l'intervalle [a,b] est mémorisé dans des variables globales pour éviter de le passer
+// en paramètre de la procédure récursive, ce qui consomme moins de pile
+static int_t __a__;
+static int_t __b__;
+
+// recherche dans p d'un intervalle inclus dans [a,b]
+// rend l'adresse de l'intervalle s'il est trouvé et rend NULL sinon
+static interval_t* search_included(node_t*p)
+{
+	interval_t*pi;
+	if (p==NULL)
+		return NULL;
+	if (p->e1.a >= 0)
+	{
+		// recherche d'abord dans le fils gauche
+		if (__a__ < p->e1.a)
+		{
+			pi=search_included(p->fg);
+			if (pi!=NULL)	// s'il est trouvé, on le retourne
+				return pi;
+		}
+		// l'intervalle e1 est-il inclus dans [a,b] ?
+		if ( (__a__ <= p->e1.a) && (__b__ >= p->e1.b) )
+		{	// si oui, le retourner
+			return &p->e1;
+		}
+	}
+	// a-t-on des chances d'en trouver dans le fils du milieu ?
+	if (__a__ <= p->e2.a)
+	{
+		pi=search_included(p->fm);
+		if (pi!=NULL)	// s'il est trouvé, le retourner
+			return pi;
+	}
+	// l'intervalle e2 est-il inclus dans [a,b] ?
+	if ( (__a__ <= p->e2.a) && (__b__ >= p->e2.a) )
+	{	// si oui, le retourner
+		return &p->e2;
+	}
+	// a-t-on des chances d'en trouver dans le fils droit ?
+	if (__b__ > p->e2.b)
+	{	// si oui, chercher
+		pi=search_included(p->fd);
+		if (pi!=NULL)	// s'il y en a un, le retourner
+			return pi;
+	}
+	// si aucun n'est trouvé, c'est qu'il n'y en a pas.
+	return NULL;
+}
+
+// suppression des intervalles de *pp qui sont inclus dans [a,b]
+static void suppr_included(int_t a, int_t b, node_t**pp)
+{
+	interval_t*pi;
+	__a__=a;
+	__b__=b;
+	do
+	{
+		// chercher s'il en existe
+		pi=search_included(*pp);
+		if (pi!=NULL)
+		{	// s'il y en a un, le supprimer
+			supprime(pi,pp);
+		}
+	}
+	while (pi!=NULL);	// recommencer tant qu'on en trouve
+}
+
+
+// ajoute l'intervalle [a,b] dans l'ensemble pp
+//---------------------------------------------
+
+void include_intvl(element_t a, element_t b, node_t**pp)
+{
+	interval_t*e;
+	interval_t i;
+	element_t x;
+
+	if (a==b)
+	{	// si intervalle [a,a], juste inclure a
+		include_elt(a,pp);
+		return;
+	}
+	x=int_min;
+	if (a>int_min)
+		x=a-1;
+	// cherche si a-1 appartient à un intervalle de *pp
+	e=belong(x,*pp);
+	if (e!=NULL)	// si oui, remplace a par la borne inf de l'intarvalle
+		a=e->a;
+	// remplace b par la borne sup d'un intervalle de p
+	x=int_max;
+	if (b<int_max)
+		x=b+1;
+	e=belong(x,*pp);	// cerche si b+1 appartient à un intervalle de *pp
+	if (e!=NULL)	// si oui, remplace b par la borne sup de cet intervalle
+		b=e->b;
+	// supprime tous les intervalles de *p qui sont inclus dans [a,b]
+	suppr_included(a,b,pp);
+	// ajoute l'intervalle [a,b] dans p;
+	i.a=a;
+	i.b=b;
+	insere(&i,pp);
+}
+
+
+// réunion de deux ensemble
+// ajoute à *pp tous les intervalles de l'ensemble p
+static node_t**__pp_include_set;
+
+static void include_set_rec(node_t*p)
+{
+	// si p est vide, rien à ajouter
+	if (p==NULL)
+		return;
+	// si a un intervalle e1, ajouter les intervalles du fils gauche
+	// ainsi que l'intervalle e1
+	if (p->e1.a >= 0)
+	{
+		include_set_rec(p->fg);
+		include_intvl(p->e1.a,p->e1.b,__pp_include_set);
+	}
+	// ajouter les intervalles du fils du milieu de p
+	include_set_rec(p->fm);
+	// ajouter le second intervalle
+	include_intvl(p->e2.a,p->e2.b,__pp_include_set);
+	// ajouter les intervalles du fils droit de p
+	include_set_rec(p->fd);
+}
+
+void include_set(node_t*p, node_t**pp)
+{
+	__pp_include_set=pp;
+	include_set_rec(p);
+}
+
+// exclure l'élémént x de l'ensemble *pp
+void exclude_elt(element_t x, node_t**pp)
+{
+	interval_t*i;
+	interval_t e;
+	// cherche l'intervalle d'appartenance
+	i=belong(x,*pp);
+	if (i==NULL)	// si x n'est pas dans pp, ne rien faire
+		return;
+	// si l'intervalle i est réduit à [x,x], supprimer l'intervalle
+	if ( (i->a==x) &&  (i->b==x) )
+	{
+		supprime(i,pp);
+		return;
+	}
+	// si l'élément est une des bornes de l'intervalle, changer juste la borne
+	if  (i->a==x)
+	{
+		i->a=x+1;
+		return;
+	}
+	if (i->b==x)
+	{
+		i->b=x-1;
+		return;
+	}
+	// si l'élément est strictement dans l'intervalle, scinder l'intervalle en deux
+	e.b = i->b;	// définit l'intervalle [x+1,b]
+	e.a = x+1;
+	i->b=x-1;	// remplace [a,b] par [a,x-1] -- a faire avant l'insersion
+	insere(&e,pp);	// ajoute l'intervalle [x+1,b]
+}
+
+// ôte l'intervalle [a,b] de l'ensemble *pp
+void exclude_intvl(element_t a, element_t b, node_t**pp)
+{
+	interval_t*e;
+	interval_t*f;
+	element_t y;
+	element_t x;
+
+	if (a==b)
+	{	// si intervalle réduit à un seul élément, ôter l'élément
+		exclude_elt(a,pp);
+		return;
+	}
+	e=belong(a,*pp);	// recherche d'un intervalle qui contient a
+	f=belong(b,*pp);	// recherche d'un intervalle qui contient b
+	if (e!=NULL)
+	{	// remplacer [x,y] par [x,a-1]
+		if ( e == f)
+		{	// si a et b appartiennent au même intervalle de pp, scinder
+			// [x a-1] U [b+1,y]
+			x=e->a;
+			y=e->b;
+			if (x < a)
+			{
+				e->b=a-1;
+				if (y > b)
+				{	// [x,a-1] U [b+1,y]
+					include_intvl(b+1,y,pp);
+				}	// sinon [x, a-1]
+			}
+			else
+			{	if (y > b)	// [b+1,y]
+					e->a=b+1;
+				
+				else		// supprimer tout l'intervalle
+					supprime(e,pp);
+
+			}
+			return;
+		}
+		// si a et b appartiennent à des intervalles différents
+		if (e->a < a)
+		{	// e devient [x, a-1]
+			e->b=a-1;
+		}	// sinon, ie x==a, il sera supprimé par suppr_included
+	}
+	if (f!=NULL)
+	{	
+		if (f->b > b)
+		{	// f devient [b+1,y]
+			f->a=b+1;
+		}	// sinon, il sera supprimé par suppr_included
+	}
+	suppr_included(a,b,pp);	// supprime les intervalles inclus dans [a,b]
+}
+
+// ôte l'ensemble p de l'ensemble pp
+static node_t**__pp_exclude_set;
+
+static void exclude_set_rec(node_t*p)
+{
+	if (p==NULL)	// si p est vide, rien à ôter
+		return;
+	// ôter les intervalles du node
+	if (p->e1.a >= 0)
+	{
+		exclude_set_rec(p->fg);
+		exclude_intvl(p->e1.a,p->e1.b,__pp_exclude_set);
+	}
+	exclude_set_rec(p->fm);
+	exclude_intvl(p->e2.a,p->e2.b,__pp_exclude_set);
+	exclude_set_rec(p->fd);
+}
+void exclude_set(node_t*p, node_t**pp)
+{
+	__pp_exclude_set=pp;
+	exclude_set_rec(p);
+}
+
+// renvoie la copie d'un ensemble
+node_t* copy_set(node_t*p)
+{
+	node_t* r;
+	r=EMPTY_SET;
+	__pp_include_set=&r;
+	include_set_rec(p);
+	return r;
+}
+
+// réunion de deux ensemble
+node_t* cup(node_t*p, node_t*q)
+{
+	node_t*r;
+	r=EMPTY_SET;		// initialiser r à l'ensemble vide
+	__pp_include_set=&r;
+	include_set_rec(p);	// ajouter les éléments de p
+	include_set_rec(q);	// ajouter les éléments de q
+	return r;
+}
+
+
+// complémentaire d'un ensemble
+node_t* complement(node_t*p)
+{
+	node_t* r;
+	r=full_set();		// initialise avec tout	
+	exclude_set(p,&r);	// ôte p
+	return r;
+}
+
+// intersection de deux ensembles
+node_t* cap(node_t* p, node_t*q)
+{
+	node_t*r,*s;
+	r=complement(p);
+	s=copy_set(q);
+	exclude_set(r,&s);
+	empty_out(&r);
+	return s;
+}
+
+
+
+
+// function for sweeping intervals in a set
+// stack size
+#define	S_SWEEP_SIZE	100
+// stack for interval sweep
+// the stack contains continuation and current node
+static struct { enum 	{ 	__cont_g,	// continuation on left child
+			__cont_e1,	// return e1 interval
+			__cont_m,	// condinuation on middle child
+			__cont_e2,	// return e2 interval
+			__cont_d 	// continuation on right child
+		} cont;
+	 node_t*node; 			// current node
+	} __stack_sweep[S_SWEEP_SIZE];
+// stack pointer
+static int __sp_sweep;
+
+
+static void __push_sweep(node_t*p)
+{
+	__sp_sweep++;
+	__stack_sweep[__sp_sweep].cont=__cont_g;
+	__stack_sweep[__sp_sweep].node=p;
+}
+
+interval_t* start_intvl(node_t*p)
+{
+	__sp_sweep=-1;
+	if (p!=NULL)
+	{
+		__push_sweep(p);
+	}
+	return next_intvl();
+}
+
+interval_t* next_intvl()
+{
+	node_t*p;
+	while (__sp_sweep>=0)
+	{
+		p=__stack_sweep[__sp_sweep].node;
+		if (p==NULL)
+		{	// if node is NULL, then pop
+			__sp_sweep--;
+			continue;
+		}
+		switch(__stack_sweep[__sp_sweep].cont)
+		{
+			case __cont_g:
+				if (p->e1.a >= 0)
+				{
+					__stack_sweep[__sp_sweep].cont=__cont_e1;
+					__push_sweep(p->fg);
+				}
+				else
+					__stack_sweep[__sp_sweep].cont=__cont_m;
+				break;
+			case __cont_e1:
+				__stack_sweep[__sp_sweep].cont=__cont_m;
+				return &p->e1;
+			case __cont_m:
+				__stack_sweep[__sp_sweep].cont=__cont_e2;
+				__push_sweep(p->fm);
+				break;
+			case __cont_e2:
+				__stack_sweep[__sp_sweep].cont=__cont_d;
+				return &p->e2;
+			case __cont_d:
+				// tailing recursion -- no push
+				__stack_sweep[__sp_sweep].cont=__cont_g;
+				__stack_sweep[__sp_sweep].node=p->fd;
+				break;
+			default:	// should not occur
+				return NULL;
+		}
+
+	}
+	return NULL;
+}
+
+
+
+// prologue
+void prologue()
+{
+	// initialise les valeurs min et max des entiers
+	set_min_max(INT_MIN,INT_MAX);
+	// initialise la mémoire
+	init_mem();
+	// initialise stack
+	__sp_sweep=-1;
+}
+
+// à faire en quittant -- affiche le temps passé.
+void bye()
+{
+	clock_t h;
+	double dh;
+	h=clock();
+	dh=((double)h)/CLOCKS_PER_SEC;
+	printf("[%lf sec.]",dh);
+	longjmp(env,1);
+}
+

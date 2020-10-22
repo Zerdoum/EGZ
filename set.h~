@@ -1,0 +1,167 @@
+#ifndef ENS
+#define ENS
+
+#include <inttypes.h>
+
+// defines the size of the integer type 32 or 64 bits integers
+#define SIZE_INT	64
+
+// this defines the size of the memory
+#define NB_NODES 4000000
+
+
+// set of nonnegative  integers
+//------------------------------
+
+// a set is described as the union of sorted disjoint intervalls.
+// Ths structure is a b-tree. The search key is the first term "a" of the intervall [a..b]
+
+#if (SIZE_INT==64)
+// this defines the interger type of the sets -- IT MUST BE SIGNED
+typedef int64_t int_t;
+typedef __uint128_t dint_t;
+#define PRId	PRId64
+#endif
+
+#if (SIZE_INT==32)
+typedef int32_t int_t;
+typedef int64_t dint_t;
+#define PRId	PRId32
+#endif
+
+// this is the type of the intervall element (useful ?).
+typedef int_t element_t;
+
+// An intervall [a,b] is given by the lower bound and the upper bound
+// a is assumed to b lower than or equal to b
+// [a,b]={a, a+1,..., b}
+typedef struct interval
+{
+	element_t a,b;	// the two bounds
+} interval_t;
+
+// The type node is the core of the B-Tree structure
+// It contains either one intervall (e2 only) or two intervalls (both e1 and e2)
+// If a node contains only one intervall in e2, then the bound e1.a equals -1
+// This is why the interger type must be signed
+// a set is a pointer to a node
+typedef struct node
+{
+	interval_t e1;	// the two intervals of the b-tree
+	interval_t e2;
+	struct node *fg, *fm, *fd; // left child, middle child and right child	
+} node_t; 
+
+// API
+// ---
+
+// the empty set has no node. It is the NULL pointer
+#define EMPTY_SET	NULL
+
+
+// defines the minimum integer and the maximum integer
+void set_min_max(int_t a, int_t b);
+
+// this must be called before anything
+void prologue();
+// to be called when the job is done
+void bye();
+// returns the number of free node in the memory
+int_t nb_free_nodes();
+
+
+// predicates
+//-----------
+// check if element x belong to set p
+// returns pointer to interval x belongs to if yes, and returns NULL if not
+interval_t* belong(element_t x, node_t*p);
+
+// returns 1 if interval[a,b] is subset of set p, 0 elsewhere
+int is_included_intvl(element_t a, element_t b, node_t*p);
+
+// returns 1 if set p is subset of set q, 0 elsewhere
+int is_subset(node_t*p, node_t*q);
+
+// returns 1 if p and q are equal sets, 0 if not
+int are_equal(node_t*p, node_t*q);
+// returns nonzero if p is the empty set and returns 0 if p is the empty set
+int is_empty(node_t*p);
+// returns 1 if p is the full set [min, max]
+int is_full(node_t*p);
+
+// display set p as intervall union
+void print_set(node_t*p);
+
+// returns the cardinality of set p, i.e. the number of elements
+int_t cardinal(node_t*p);
+
+// make the set *pp empty and free memory it take up
+void empty_out(node_t**pp);
+
+
+
+// set constructors
+// these functions return a pointer to a new set
+// they should not be called to assign to an already constructed set
+// if p is a nonempty set, call empty_out(&p) before
+//------------------------------------------------------------------
+
+// Interval construction: returns a set equal to the intervall [a,b]
+node_t* interval(element_t a, element_t b);
+
+// returns the full est [int_min,int_max]
+node_t* full_set();
+
+// returns the union of sets p and q
+
+node_t* cup(node_t*p, node_t*q);
+// returns the intersection of sets p and q
+
+node_t* cap(node_t*p, node_t*q);
+
+// returns the complement of set p
+node_t* complement(node_t*p);
+
+// returns a set equal to a copy of set p
+node_t* copy_set(node_t*p);
+
+// set modification
+//-----------------
+
+// set modifiers must be called with already constructed set, eventually EMPTY
+
+// includes element x to set *pp 
+void include_elt(element_t x, node_t**pp);
+
+// includes interval [a,b] to set *pp
+void include_intvl(element_t a, element_t b, node_t**pp);
+
+// include set p in set *pp
+void include_set(node_t*p, node_t**pp);
+
+// rempli un ensemble avec tous les éléments entre min et max 
+void full_up(node_t**p);
+
+// exclude element x from set *pp
+void exclude_elt(element_t x, node_t**pp);
+
+// exclude interval [a,b] from set *pp
+void exclude_intvl(element_t a, element_t b, node_t**pp);
+
+// exclude set p from set *pp
+void exclude_set(node_t*p, node_t**pp);
+
+
+// interface for sweeping intervals in a set
+// /!\ these procedures are not re-entrant. Only one sweep process can occur at a time
+
+// start sweeping process of intervals of a node and returns the first interval of p
+// returns NULL if p is empty
+interval_t* start_intvl(node_t*p);
+// returns next interval of the node, and NULL if none
+interval_t* next_intvl();
+
+
+// returns number of nodes in set
+int taille(node_t*);
+#endif

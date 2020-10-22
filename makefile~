@@ -1,0 +1,18 @@
+# makefile de base pour compiler un fichier .c 
+
+
+all:	main.o set.o
+	gcc -o main main.o set.o -m64
+
+main.o:	main.c set.h
+	gcc -c -Wall -O1 -m64 main.c
+
+set.o: set.c set.h
+	gcc -c -Wall -Ofast -m64 set.c
+
+clean:
+	rm -f main *.o
+
+run: main
+	./main
+
